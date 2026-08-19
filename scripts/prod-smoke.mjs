@@ -106,7 +106,9 @@ async function main() {
     if (!item) {
       fail(`put/get round-trip failed: get(${JSON.stringify(namespace)}, "${key}") returned null.`);
     }
-    if (JSON.stringify(item.value) !== JSON.stringify(value)) {
+    // Key-order-insensitive compare: the API round-trips objects, not key order.
+    const canonical = (v) => JSON.stringify(Object.fromEntries(Object.entries(v).sort()));
+    if (canonical(item.value) !== canonical(value)) {
       fail(
         "put/get round-trip failed: the stored value did not come back verbatim. " +
           `expected=${JSON.stringify(value)} actual=${JSON.stringify(item.value)}`,
