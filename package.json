@@ -39,10 +39,10 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/ledgermem/getmnemo-langgraph.git"
+    "url": "https://github.com/ledgermem/getmnemo-langgraph-js.git"
   },
   "bugs": {
-    "url": "https://github.com/ledgermem/getmnemo-langgraph/issues"
+    "url": "https://github.com/ledgermem/getmnemo-langgraph-js/issues"
   },
   "dependencies": {
     "getmnemo": "^0.5.0"
