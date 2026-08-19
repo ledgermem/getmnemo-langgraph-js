@@ -1,7 +1,7 @@
 {
   "name": "getmnemo-langgraph",
-  "version": "0.1.0",
-  "description": "Mnemo-backed long-term memory for LangGraph JS — a BaseStore implementation plus remember/recall tools.",
+  "version": "0.1.1",
+  "description": "Mnemo-backed long-term memory for LangGraph JS \u2014 a BaseStore implementation plus remember/recall tools.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -45,7 +45,7 @@
     "url": "https://github.com/ledgermem/getmnemo-langgraph-js/issues"
   },
   "dependencies": {
-    "getmnemo": "^0.5.0"
+    "getmnemo": "^0.5.1"
   },
   "peerDependencies": {
     "@langchain/core": ">=0.3.0 <2.0.0",

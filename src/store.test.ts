@@ -117,14 +117,18 @@ describe("MnemoStore", () => {
       await store.put(["memories", "user42"], "profile", { name: "Grace" });
 
       expect(add).not.toHaveBeenCalled();
-      expect(update).toHaveBeenCalledWith("m9", {
-        content: "name: Grace",
-        metadata: {
-          key: "profile",
-          namespace: ["memories", "user42"],
-          value: { name: "Grace" },
+      expect(update).toHaveBeenCalledWith(
+        "m9",
+        {
+          content: "name: Grace",
+          metadata: {
+            key: "profile",
+            namespace: ["memories", "user42"],
+            value: { name: "Grace" },
+          },
         },
-      });
+        { containerTag: "memories:user42" },
+      );
     });
 
     it("merges developer metadata without letting it shadow the envelope", async () => {
@@ -197,7 +201,7 @@ describe("MnemoStore", () => {
       );
 
       const item = await store.get(["memories", "user42"], "profile");
-      expect(get).toHaveBeenCalledWith("m1");
+      expect(get).toHaveBeenCalledWith("m1", { containerTag: "memories:user42" });
       expect(list).not.toHaveBeenCalled();
       expect(item?.value).toEqual({ name: "Ada" });
     });
@@ -210,7 +214,7 @@ describe("MnemoStore", () => {
       list.mockResolvedValue({ items: [], nextCursor: null });
 
       expect(await store.get(["memories", "user42"], "profile")).toBeNull();
-      expect(get).toHaveBeenCalledWith("m1");
+      expect(get).toHaveBeenCalledWith("m1", { containerTag: "memories:user42" });
     });
   });
 
@@ -360,7 +364,7 @@ describe("MnemoStore", () => {
       remove.mockResolvedValue({ id: "m9", deleted: true });
       const store = new MnemoStore({ client });
       await store.delete(["memories", "user42"], "profile");
-      expect(remove).toHaveBeenCalledWith("m9");
+      expect(remove).toHaveBeenCalledWith("m9", { containerTag: "memories:user42" });
     });
 
     it("is a no-op for an unknown key", async () => {
@@ -408,7 +412,7 @@ describe("MnemoStore", () => {
 
       expect(putResult).toBeUndefined();
       // The id cached by the put is what the get resolves through.
-      expect(get).toHaveBeenCalledWith("m1");
+      expect(get).toHaveBeenCalledWith("m1", { containerTag: "ns:x" });
       expect(item).not.toBeNull();
     });
   });
