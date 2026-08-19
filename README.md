@@ -191,7 +191,7 @@ Both return a JSON string. Neither exposes `containerTag`, `scope`, or
 
 | Option | Default | Description |
 | ------ | ------- | ----------- |
-| `client` | — | Existing `Mnemo` instance (overrides `apiKey`/`workspaceId`). |
+| `client` | — | Existing `Mnemo` instance (overrides `apiKey`/`workspaceId`). Must be getmnemo **>= 0.5.1**: older clients silently drop the container options on by-id calls, and the API then 400s every `get`/overwriting `put`/`delete`. |
 | `apiKey` | env | Full-access — keep server-side. Falls back to `GETMNEMO_API_KEY`. |
 | `workspaceId` | env | Falls back to `GETMNEMO_WORKSPACE_ID`. |
 | `containerTag` | — | Pin every namespace to one container instead of deriving one per namespace. |
