@@ -14,13 +14,14 @@
   "files": [
     "dist",
     "src",
+    "!src/**/*.test.ts",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",
-    "lint": "tsc --noEmit",
+    "lint": "tsc --noEmit && tsc -p tsconfig.test.json",
     "smoke": "node scripts/prod-smoke.mjs"
   },
   "keywords": [
