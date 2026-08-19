@@ -131,6 +131,47 @@ describe("MnemoStore", () => {
       );
     });
 
+    it("recreates instead of failing when the update loses a delete race", async () => {
+      containerWith(
+        memory("m9", "name: Ada", {
+          key: "profile",
+          namespace: ["memories", "user42"],
+          value: { name: "Ada" },
+        }),
+      );
+      update.mockRejectedValue(notFound());
+      const store = new MnemoStore({ client });
+      await store.put(["memories", "user42"], "profile", { name: "Grace" });
+
+      expect(add).toHaveBeenCalledWith(
+        expect.objectContaining({ content: "name: Grace" }),
+      );
+    });
+
+    it("does not cache an id the server deduplicated onto another memory", async () => {
+      emptyContainer();
+      add.mockResolvedValue({
+        scopeKey: "memories:user42",
+        items: [{ id: "m1" }],
+        receipt: {
+          writeId: "w1",
+          status: "searchable",
+          searchableAt: "2026-01-01T00:00:00.000Z",
+          items: [{ inputIndex: 0, memoryId: "m1", status: "deduplicated" }],
+        },
+      });
+      const store = new MnemoStore({ client });
+      await store.put(["memories", "user42"], "note", { content: "likes teal" });
+
+      // A later lookup must not trust the aliased id: it scans instead.
+      get.mockClear();
+      list.mockClear();
+      emptyContainer();
+      await store.get(["memories", "user42"], "note");
+      expect(get).not.toHaveBeenCalled();
+      expect(list).toHaveBeenCalled();
+    });
+
     it("merges developer metadata without letting it shadow the envelope", async () => {
       emptyContainer();
       const store = new MnemoStore({
@@ -215,6 +256,57 @@ describe("MnemoStore", () => {
 
       expect(await store.get(["memories", "user42"], "profile")).toBeNull();
       expect(get).toHaveBeenCalledWith("m1", { containerTag: "memories:user42" });
+    });
+
+    it("falls back to a scan when the cached id stops resolving in this container (API 403)", async () => {
+      emptyContainer();
+      const store = new MnemoStore({ client });
+      await store.put(["memories", "user42"], "profile", { name: "Ada" });
+      const scopeMismatch = new Error("Forbidden") as Error & { status: number };
+      scopeMismatch.status = 403;
+      get.mockRejectedValue(scopeMismatch);
+      list.mockClear();
+      containerWith(
+        memory("m2", "name: Ada", {
+          key: "profile",
+          namespace: ["memories", "user42"],
+          value: { name: "Ada" },
+        }),
+      );
+
+      const item = await store.get(["memories", "user42"], "profile");
+      expect(item?.value).toEqual({ name: "Ada" });
+      expect(list).toHaveBeenCalled();
+    });
+
+    it("distrusts a cached id whose memory was re-keyed out-of-band", async () => {
+      emptyContainer();
+      const store = new MnemoStore({ client });
+      await store.put(["memories", "user42"], "profile", { name: "Ada" });
+      // The id now resolves to a memory that no longer carries this key.
+      get.mockResolvedValue(
+        memory("m1", "other", { key: "other", namespace: ["memories", "user42"], value: { v: 1 } }),
+      );
+      list.mockClear();
+      emptyContainer();
+
+      expect(await store.get(["memories", "user42"], "profile")).toBeNull();
+      // The stale hit was rejected and the scan consulted instead.
+      expect(list).toHaveBeenCalled();
+    });
+
+    it("treats a soft-deleted memory as absent", async () => {
+      const dead = {
+        ...memory("m1", "name: Ada", {
+          key: "profile",
+          namespace: ["memories", "user42"],
+          value: { name: "Ada" },
+        }),
+        deletedAt: "2026-01-03T00:00:00.000Z",
+      };
+      containerWith(dead);
+      const store = new MnemoStore({ client });
+      expect(await store.get(["memories", "user42"], "profile")).toBeNull();
     });
   });
 
@@ -374,6 +466,21 @@ describe("MnemoStore", () => {
       const store = new MnemoStore({ client });
       await store.delete(["memories", "user42"], "nope");
       expect(remove).not.toHaveBeenCalled();
+    });
+
+    it("treats losing a delete race as the documented no-op", async () => {
+      containerWith(
+        memory("m9", "name: Ada", {
+          key: "profile",
+          namespace: ["memories", "user42"],
+          value: { name: "Ada" },
+        }),
+      );
+      remove.mockRejectedValue(notFound());
+      const store = new MnemoStore({ client });
+      await expect(
+        store.delete(["memories", "user42"], "profile"),
+      ).resolves.toBeUndefined();
     });
 
     it("re-adds rather than updating after a delete (cache is invalidated)", async () => {

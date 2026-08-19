@@ -11,7 +11,12 @@ import type {
 } from "@langchain/langgraph-checkpoint";
 import type { Memory, Mnemo, SearchHit } from "getmnemo";
 
-import { isNotFound, resolveClient, type MnemoClientOptions } from "./client.js";
+import {
+  isNotFound,
+  isStaleByIdRead,
+  resolveClient,
+  type MnemoClientOptions,
+} from "./client.js";
 import { matchesFilter } from "./filter.js";
 import {
   hasNamespacePrefix,
@@ -157,12 +162,24 @@ export class MnemoStore extends BaseStore {
     const existing = await this.#findMemory(operation.namespace, operation.key);
     if (existing) {
       // By-id memory routes require the scope as query params (getmnemo >= 0.5.1).
-      await this.#client.update(existing.id, { content, metadata }, { containerTag });
-      return;
+      try {
+        await this.#client.update(existing.id, { content, metadata }, { containerTag });
+        return;
+      } catch (error) {
+        // The memory vanished between the lookup and the PATCH (a concurrent
+        // delete). Recreate below instead of failing a valid put.
+        if (!isNotFound(error)) throw error;
+        this.#idCache.delete(cacheKey(operation.namespace, operation.key));
+      }
     }
     const response = await this.#client.add({ content, containerTag, metadata });
     const created = response.items?.[0]?.id;
-    if (created) {
+    // A "deduplicated" receipt means the id belongs to an EXISTING memory with
+    // its own key envelope — caching it would alias this key onto that memory,
+    // and a later delete of this key would destroy it. Cache created ids only.
+    const wasDeduplicated =
+      response.receipt?.items?.[0]?.status === "deduplicated";
+    if (created && !wasDeduplicated) {
       this.#idCache.set(cacheKey(operation.namespace, operation.key), created);
     }
   }
@@ -171,8 +188,15 @@ export class MnemoStore extends BaseStore {
     const memory = await this.#findMemory(namespace, key);
     // Deleting a key that was never written is a no-op, matching BaseStore.
     if (!memory) return;
-    await this.#client.delete(memory.id, { containerTag: this.containerTagFor(namespace) });
-    this.#idCache.delete(cacheKey(namespace, key));
+    const containerTag = this.containerTagFor(namespace);
+    try {
+      await this.#client.delete(memory.id, { containerTag });
+    } catch (error) {
+      // Losing the race to another deleter still satisfies the no-op contract.
+      if (!isNotFound(error)) throw error;
+    } finally {
+      this.#idCache.delete(cacheKey(namespace, key));
+    }
   }
 
   async #search(operation: SearchOperation): Promise<SearchItem[]> {
@@ -245,14 +269,19 @@ export class MnemoStore extends BaseStore {
     const containerTag = this.containerTagFor(namespace);
     const cached = this.#idCache.get(cacheKey(namespace, key));
     if (cached) {
+      let hit: Memory | null = null;
       try {
-        return await this.#client.get(cached, { containerTag });
+        hit = await this.#client.get(cached, { containerTag });
       } catch (error) {
-        // The memory was deleted out from under us — fall through to a scan
-        // rather than reporting a stale hit.
-        if (!isNotFound(error)) throw error;
-        this.#idCache.delete(cacheKey(namespace, key));
+        // Gone (404/410) or no longer visible under this container (400/403)
+        // — fall through to a scan rather than reporting a stale hit.
+        if (!isStaleByIdRead(error)) throw error;
       }
+      // The id can also go stale while the GET succeeds: re-keyed out-of-band,
+      // soft-deleted, or aliased by a server-side dedup. Trust the hit only
+      // while its envelope still matches this key.
+      if (hit && this.#matchesEnvelope(hit, namespace, key)) return hit;
+      this.#idCache.delete(cacheKey(namespace, key));
     }
     const memories = await this.#scanContainer(containerTag);
     for (const memory of memories) {
@@ -265,6 +294,18 @@ export class MnemoStore extends BaseStore {
       return memory;
     }
     return null;
+  }
+
+  /** A cached-id hit only counts while it is still the live memory for this key. */
+  #matchesEnvelope(
+    memory: Memory,
+    namespace: readonly string[],
+    key: string,
+  ): boolean {
+    if (isTombstone(memory)) return false;
+    if (readItemKey(memory.metadata) !== key) return false;
+    const stored = readItemNamespace(memory.metadata);
+    return !stored || arrayEquals(stored, namespace);
   }
 
   /** Walk `GET /v1/memories` pages up to `maxScanPages`. */
@@ -285,7 +326,9 @@ export class MnemoStore extends BaseStore {
         if (isNotFound(error)) return collected;
         throw error;
       }
-      collected.push(...batch);
+      // Soft-deleted memories are restorable server-side but must read as
+      // absent through the store.
+      collected.push(...batch.filter((memory) => !isTombstone(memory)));
       if (!cursor) break;
     }
     return collected;
@@ -324,6 +367,10 @@ export class MnemoStore extends BaseStore {
 
 function cacheKey(namespace: readonly string[], key: string): string {
   return `${JSON.stringify(namespace)}|${key}`;
+}
+
+function isTombstone(memory: Memory): boolean {
+  return memory.deletedAt != null;
 }
 
 function arrayEquals(a: readonly string[], b: readonly string[]): boolean {
