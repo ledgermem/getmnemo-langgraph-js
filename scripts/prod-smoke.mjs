@@ -32,9 +32,16 @@ import { MnemoStore } from "../dist/index.js";
 // Give the indexer a moment between the write and the semantic read.
 const PROPAGATION_WAIT_MS = 3_000;
 
+/**
+ * Assertion failures THROW rather than process.exit(1): exit() inside the try
+ * would tear the process down without running the finally-cleanup, stranding
+ * the run's memory in the production workspace (containers are not
+ * enumerable, so orphans are unreachable forever).
+ */
+class SmokeFailure extends Error {}
+
 function fail(msg) {
-  console.error(`\n[smoke] FAIL: ${msg}`);
-  process.exit(1);
+  throw new SmokeFailure(msg);
 }
 
 /** LOUD failure for a server-side tenant-isolation leak. */
@@ -53,7 +60,7 @@ function isolationFailure(detail) {
   );
   console.error(`\nDetail: ${detail}`);
   console.error(`${banner}\n`);
-  process.exit(1);
+  throw new SmokeFailure("tenant-isolation leak (see banner above)");
 }
 
 function sleep(ms) {
@@ -116,6 +123,28 @@ async function main() {
     }
     console.log("[smoke] OK put + get: the item round-tripped exactly");
 
+    // ---- CRITICAL PATH (a2): re-put -> get (PATCH by id) -----------------
+    // Overwriting an existing key drives PATCH /v1/memories/:id — a by-id
+    // route that requires the container on the query string. A graph loop
+    // rewrites the same key every turn, so this is the hottest store op in
+    // production and must not go unexercised by the release gate.
+    const updatedValue = {
+      content: `my favorite color is ${secret} (updated)`,
+      run: nonce,
+    };
+    await store.put(namespace, key, updatedValue);
+    const updated = await store.get(namespace, key);
+    if (!updated) {
+      fail("re-put round-trip failed: get() returned null after the overwrite.");
+    }
+    if (canonical(updated.value) !== canonical(updatedValue)) {
+      fail(
+        "re-put round-trip failed: the overwritten value did not come back. " +
+          `expected=${JSON.stringify(updatedValue)} actual=${JSON.stringify(updated.value)}`,
+      );
+    }
+    console.log("[smoke] OK re-put: the overwrite (PATCH by id) round-tripped");
+
     // Let the indexer make the write searchable before the semantic read.
     await sleep(PROPAGATION_WAIT_MS);
 
@@ -167,11 +196,20 @@ async function main() {
     }
   }
 
-  console.log("\n[smoke] PASS: store put/get/search/delete + namespace isolation green.");
-  process.exit(0);
+  console.log(
+    "\n[smoke] PASS: store put/re-put/get/search/delete + namespace isolation green.",
+  );
 }
 
-main().catch((err) => {
-  const msg = err instanceof Error ? (err.stack ?? err.message) : String(err);
-  fail(`unexpected error during smoke run:\n${msg}`);
-});
+main().then(
+  () => process.exit(0),
+  (err) => {
+    if (err instanceof SmokeFailure) {
+      console.error(`\n[smoke] FAIL: ${err.message}`);
+    } else {
+      const msg = err instanceof Error ? (err.stack ?? err.message) : String(err);
+      console.error(`\n[smoke] FAIL: unexpected error during smoke run:\n${msg}`);
+    }
+    process.exit(1);
+  },
+);
