@@ -9,7 +9,9 @@ const update = vi.fn();
 const remove = vi.fn();
 const search = vi.fn();
 
-// The core client is fully mocked — these tests never touch the network.
+// The core client here is a hand-mock. Nothing in this file touches the
+// network: the wire-level suite below builds a REAL client, but over a
+// stubbed fetch pointed at a non-routable baseUrl.
 const client = {
   add,
   get,
@@ -535,9 +537,9 @@ describe("MnemoStore", () => {
     });
   });
 
-  describe("container scope on by-id routes (wire-level)", () => {
+  describe("container scope on the wire", () => {
     // These run the REAL core client over a stubbed fetch, proving the
-    // container survives all the way onto the request URL. The API rejects
+    // container survives all the way onto each request URL. The API rejects
     // GET/PATCH/DELETE /v1/memories/:id without one ("A containerTag or
     // scopeType and scopeId are required for direct memory access."), and the
     // store builds its client without defaultContainerTag, so a mock-level
@@ -547,7 +549,7 @@ describe("MnemoStore", () => {
       url: URL;
     }
 
-    function wireStore() {
+    function wireStore(options: { containerTag?: string } = {}) {
       const seen: SeenRequest[] = [];
       const stored = memory("m9", "name: Ada", {
         key: "profile",
@@ -573,91 +575,85 @@ describe("MnemoStore", () => {
         );
       }) as typeof fetch;
       const store = new MnemoStore({
-        client: new Mnemo({ apiKey: "test", workspaceId: "ws", fetch: fetchStub }),
+        // The non-routable baseUrl makes any request that escapes the stub
+        // fail loudly instead of reaching the real API.
+        client: new Mnemo({
+          apiKey: "test",
+          baseUrl: "http://mnemo.invalid",
+          fetch: fetchStub,
+        }),
+        ...options,
       });
       return { store, seen };
     }
 
+    /** Every request to a by-id memory route, whatever the id. */
     function byIdRequests(seen: SeenRequest[]): SeenRequest[] {
-      return seen.filter((r) => r.url.pathname === "/v1/memories/m9");
+      return seen.filter(
+        (r) =>
+          r.url.pathname.startsWith("/v1/memories/") &&
+          r.url.pathname !== "/v1/memories",
+      );
     }
 
-    it("PATCHes an existing key with containerTag on the URL", async () => {
-      const { store, seen } = wireStore();
-      await store.put(["memories", "user42"], "profile", { name: "Grace" });
+    const MODES = [
+      { name: "derived container", options: {}, tag: "memories:user42" },
+      {
+        name: "pinned container",
+        options: { containerTag: "user:jane" },
+        tag: "user:jane",
+      },
+    ] as const;
 
-      const byId = byIdRequests(seen);
-      expect(byId).toHaveLength(1);
-      expect(byId[0].method).toBe("PATCH");
-      expect(byId[0].url.searchParams.get("containerTag")).toBe(
-        "memories:user42",
-      );
-    });
+    for (const mode of MODES) {
+      describe(mode.name, () => {
+        it(`PATCHes an existing key with containerTag=${mode.tag} on the URL`, async () => {
+          const { store, seen } = wireStore(mode.options);
+          await store.put(["memories", "user42"], "profile", { name: "Grace" });
 
-    it("GETs a cached id with containerTag on the URL", async () => {
-      const { store, seen } = wireStore();
-      // First get scans the container and caches the id; the second resolves
-      // through GET /v1/memories/:id.
-      await store.get(["memories", "user42"], "profile");
-      await store.get(["memories", "user42"], "profile");
+          const byId = byIdRequests(seen);
+          expect(byId).toHaveLength(1);
+          expect(byId[0].method).toBe("PATCH");
+          expect(byId[0].url.searchParams.get("containerTag")).toBe(mode.tag);
+        });
 
-      const byId = byIdRequests(seen);
-      expect(byId).toHaveLength(1);
-      expect(byId[0].method).toBe("GET");
-      expect(byId[0].url.searchParams.get("containerTag")).toBe(
-        "memories:user42",
-      );
-    });
+        it(`GETs a cached id with containerTag=${mode.tag} on the URL`, async () => {
+          const { store, seen } = wireStore(mode.options);
+          // First get scans the container and caches the id; the second
+          // resolves through GET /v1/memories/:id.
+          await store.get(["memories", "user42"], "profile");
+          await store.get(["memories", "user42"], "profile");
 
-    it("DELETEs with containerTag on the URL", async () => {
-      const { store, seen } = wireStore();
-      await store.delete(["memories", "user42"], "profile");
+          const byId = byIdRequests(seen);
+          expect(byId).toHaveLength(1);
+          expect(byId[0].method).toBe("GET");
+          expect(byId[0].url.searchParams.get("containerTag")).toBe(mode.tag);
+        });
 
-      const byId = byIdRequests(seen);
-      expect(byId).toHaveLength(1);
-      expect(byId[0].method).toBe("DELETE");
-      expect(byId[0].url.searchParams.get("containerTag")).toBe(
-        "memories:user42",
-      );
-    });
+        it(`DELETEs with containerTag=${mode.tag} on the URL`, async () => {
+          const { store, seen } = wireStore(mode.options);
+          await store.delete(["memories", "user42"], "profile");
 
-    it("scopes by-id routes to the pinned container when containerTag is set", async () => {
-      const seenPinned: SeenRequest[] = [];
-      const fetchStub = ((input: string | URL | Request, init?: RequestInit) => {
-        const request =
-          input instanceof Request ? input : new Request(input, init);
-        const url = new URL(request.url);
-        seenPinned.push({ method: request.method, url });
-        const body =
-          request.method === "GET" && url.pathname === "/v1/memories"
-            ? {
-                items: [
-                  memory("m9", "x", {
-                    key: "profile",
-                    namespace: ["memories", "user42"],
-                    value: { v: 1 },
-                  }),
-                ],
-                nextCursor: null,
-              }
-            : { id: "m9", deleted: true };
-        return Promise.resolve(
-          new Response(JSON.stringify(body), {
-            status: 200,
-            headers: { "content-type": "application/json" },
-          }),
-        );
-      }) as typeof fetch;
-      const store = new MnemoStore({
-        client: new Mnemo({ apiKey: "test", workspaceId: "ws", fetch: fetchStub }),
-        containerTag: "user:jane",
+          const byId = byIdRequests(seen);
+          expect(byId).toHaveLength(1);
+          expect(byId[0].method).toBe("DELETE");
+          expect(byId[0].url.searchParams.get("containerTag")).toBe(mode.tag);
+        });
+
+        it("scopes the container scan to the same tag", async () => {
+          const { store, seen } = wireStore(mode.options);
+          await store.get(["memories", "user42"], "profile");
+
+          const scans = seen.filter(
+            (r) => r.method === "GET" && r.url.pathname === "/v1/memories",
+          );
+          expect(scans.length).toBeGreaterThan(0);
+          for (const scan of scans) {
+            expect(scan.url.searchParams.get("containerTag")).toBe(mode.tag);
+          }
+        });
       });
-      await store.delete(["memories", "user42"], "profile");
-
-      const byId = byIdRequests(seenPinned);
-      expect(byId).toHaveLength(1);
-      expect(byId[0].url.searchParams.get("containerTag")).toBe("user:jane");
-    });
+    }
   });
 
   describe("credentials", () => {
