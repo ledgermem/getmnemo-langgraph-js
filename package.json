@@ -45,7 +45,7 @@
     "url": "https://github.com/ledgermem/getmnemo-langgraph-js/issues"
   },
   "dependencies": {
-    "getmnemo": "^0.5.0"
+    "getmnemo": "^0.5.1"
   },
   "peerDependencies": {
     "@langchain/core": ">=0.3.0 <2.0.0",

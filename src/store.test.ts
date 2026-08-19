@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { Mnemo } from "getmnemo";
+import { Mnemo } from "getmnemo";
 import { MnemoStore } from "./store.js";
 
 const add = vi.fn();
@@ -117,14 +117,18 @@ describe("MnemoStore", () => {
       await store.put(["memories", "user42"], "profile", { name: "Grace" });
 
       expect(add).not.toHaveBeenCalled();
-      expect(update).toHaveBeenCalledWith("m9", {
-        content: "name: Grace",
-        metadata: {
-          key: "profile",
-          namespace: ["memories", "user42"],
-          value: { name: "Grace" },
+      expect(update).toHaveBeenCalledWith(
+        "m9",
+        {
+          content: "name: Grace",
+          metadata: {
+            key: "profile",
+            namespace: ["memories", "user42"],
+            value: { name: "Grace" },
+          },
         },
-      });
+        { containerTag: "memories:user42" },
+      );
     });
 
     it("merges developer metadata without letting it shadow the envelope", async () => {
@@ -197,7 +201,7 @@ describe("MnemoStore", () => {
       );
 
       const item = await store.get(["memories", "user42"], "profile");
-      expect(get).toHaveBeenCalledWith("m1");
+      expect(get).toHaveBeenCalledWith("m1", { containerTag: "memories:user42" });
       expect(list).not.toHaveBeenCalled();
       expect(item?.value).toEqual({ name: "Ada" });
     });
@@ -210,7 +214,7 @@ describe("MnemoStore", () => {
       list.mockResolvedValue({ items: [], nextCursor: null });
 
       expect(await store.get(["memories", "user42"], "profile")).toBeNull();
-      expect(get).toHaveBeenCalledWith("m1");
+      expect(get).toHaveBeenCalledWith("m1", { containerTag: "memories:user42" });
     });
   });
 
@@ -360,7 +364,9 @@ describe("MnemoStore", () => {
       remove.mockResolvedValue({ id: "m9", deleted: true });
       const store = new MnemoStore({ client });
       await store.delete(["memories", "user42"], "profile");
-      expect(remove).toHaveBeenCalledWith("m9");
+      expect(remove).toHaveBeenCalledWith("m9", {
+        containerTag: "memories:user42",
+      });
     });
 
     it("is a no-op for an unknown key", async () => {
@@ -408,7 +414,7 @@ describe("MnemoStore", () => {
 
       expect(putResult).toBeUndefined();
       // The id cached by the put is what the get resolves through.
-      expect(get).toHaveBeenCalledWith("m1");
+      expect(get).toHaveBeenCalledWith("m1", { containerTag: "ns:x" });
       expect(item).not.toBeNull();
     });
   });
@@ -419,6 +425,131 @@ describe("MnemoStore", () => {
       await expect(store.listNamespaces()).rejects.toThrow(
         /not supported.*not\s+enumerable/s,
       );
+    });
+  });
+
+  describe("container scope on by-id routes (wire-level)", () => {
+    // These run the REAL core client over a stubbed fetch, proving the
+    // container survives all the way onto the request URL. The API rejects
+    // GET/PATCH/DELETE /v1/memories/:id without one ("A containerTag or
+    // scopeType and scopeId are required for direct memory access."), and the
+    // store builds its client without defaultContainerTag, so a mock-level
+    // assertion alone would not catch a dropped query param.
+    interface SeenRequest {
+      method: string;
+      url: URL;
+    }
+
+    function wireStore() {
+      const seen: SeenRequest[] = [];
+      const stored = memory("m9", "name: Ada", {
+        key: "profile",
+        namespace: ["memories", "user42"],
+        value: { name: "Ada" },
+      });
+      const fetchStub = ((input: string | URL | Request, init?: RequestInit) => {
+        const request =
+          input instanceof Request ? input : new Request(input, init);
+        const url = new URL(request.url);
+        seen.push({ method: request.method, url });
+        const body =
+          request.method === "GET" && url.pathname === "/v1/memories"
+            ? { items: [stored], nextCursor: null }
+            : request.method === "DELETE"
+              ? { id: stored.id, deleted: true }
+              : stored;
+        return Promise.resolve(
+          new Response(JSON.stringify(body), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        );
+      }) as typeof fetch;
+      const store = new MnemoStore({
+        client: new Mnemo({ apiKey: "test", workspaceId: "ws", fetch: fetchStub }),
+      });
+      return { store, seen };
+    }
+
+    function byIdRequests(seen: SeenRequest[]): SeenRequest[] {
+      return seen.filter((r) => r.url.pathname === "/v1/memories/m9");
+    }
+
+    it("PATCHes an existing key with containerTag on the URL", async () => {
+      const { store, seen } = wireStore();
+      await store.put(["memories", "user42"], "profile", { name: "Grace" });
+
+      const byId = byIdRequests(seen);
+      expect(byId).toHaveLength(1);
+      expect(byId[0].method).toBe("PATCH");
+      expect(byId[0].url.searchParams.get("containerTag")).toBe(
+        "memories:user42",
+      );
+    });
+
+    it("GETs a cached id with containerTag on the URL", async () => {
+      const { store, seen } = wireStore();
+      // First get scans the container and caches the id; the second resolves
+      // through GET /v1/memories/:id.
+      await store.get(["memories", "user42"], "profile");
+      await store.get(["memories", "user42"], "profile");
+
+      const byId = byIdRequests(seen);
+      expect(byId).toHaveLength(1);
+      expect(byId[0].method).toBe("GET");
+      expect(byId[0].url.searchParams.get("containerTag")).toBe(
+        "memories:user42",
+      );
+    });
+
+    it("DELETEs with containerTag on the URL", async () => {
+      const { store, seen } = wireStore();
+      await store.delete(["memories", "user42"], "profile");
+
+      const byId = byIdRequests(seen);
+      expect(byId).toHaveLength(1);
+      expect(byId[0].method).toBe("DELETE");
+      expect(byId[0].url.searchParams.get("containerTag")).toBe(
+        "memories:user42",
+      );
+    });
+
+    it("scopes by-id routes to the pinned container when containerTag is set", async () => {
+      const seenPinned: SeenRequest[] = [];
+      const fetchStub = ((input: string | URL | Request, init?: RequestInit) => {
+        const request =
+          input instanceof Request ? input : new Request(input, init);
+        const url = new URL(request.url);
+        seenPinned.push({ method: request.method, url });
+        const body =
+          request.method === "GET" && url.pathname === "/v1/memories"
+            ? {
+                items: [
+                  memory("m9", "x", {
+                    key: "profile",
+                    namespace: ["memories", "user42"],
+                    value: { v: 1 },
+                  }),
+                ],
+                nextCursor: null,
+              }
+            : { id: "m9", deleted: true };
+        return Promise.resolve(
+          new Response(JSON.stringify(body), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        );
+      }) as typeof fetch;
+      const store = new MnemoStore({
+        client: new Mnemo({ apiKey: "test", workspaceId: "ws", fetch: fetchStub }),
+        containerTag: "user:jane",
+      });
+      await store.delete(["memories", "user42"], "profile");
+
+      const byId = byIdRequests(seenPinned);
+      expect(byId).toHaveLength(1);
+      expect(byId[0].url.searchParams.get("containerTag")).toBe("user:jane");
     });
   });
 

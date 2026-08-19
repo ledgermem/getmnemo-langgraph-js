@@ -156,7 +156,9 @@ export class MnemoStore extends BaseStore {
     );
     const existing = await this.#findMemory(operation.namespace, operation.key);
     if (existing) {
-      await this.#client.update(existing.id, { content, metadata });
+      // By-id memory routes 400 without a container scope on the query string,
+      // so every get/update/delete here passes the namespace's containerTag.
+      await this.#client.update(existing.id, { content, metadata }, { containerTag });
       return;
     }
     const response = await this.#client.add({ content, containerTag, metadata });
@@ -170,7 +172,9 @@ export class MnemoStore extends BaseStore {
     const memory = await this.#findMemory(namespace, key);
     // Deleting a key that was never written is a no-op, matching BaseStore.
     if (!memory) return;
-    await this.#client.delete(memory.id);
+    await this.#client.delete(memory.id, {
+      containerTag: this.containerTagFor(namespace),
+    });
     this.#idCache.delete(cacheKey(namespace, key));
   }
 
@@ -245,7 +249,7 @@ export class MnemoStore extends BaseStore {
     const cached = this.#idCache.get(cacheKey(namespace, key));
     if (cached) {
       try {
-        return await this.#client.get(cached);
+        return await this.#client.get(cached, { containerTag });
       } catch (error) {
         // The memory was deleted out from under us — fall through to a scan
         // rather than reporting a stale hit.
