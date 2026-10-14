@@ -75,11 +75,12 @@ function hitsContain(hits, needle) {
 
 async function main() {
   const apiKey = process.env.MNEMO_API_KEY;
+  // Deprecated in core 0.6 (workspace identity comes from the API key);
+  // forwarded when set so older CI secrets keep working.
   const workspaceId = process.env.MNEMO_WORKSPACE_ID;
   const base = process.env.MNEMO_TEST_CONTAINER;
 
   if (!apiKey) fail("MNEMO_API_KEY is not set");
-  if (!workspaceId) fail("MNEMO_WORKSPACE_ID is not set");
   if (!base) fail("MNEMO_TEST_CONTAINER is not set");
 
   // Unique per-run nonce so concurrent / re-run smokes never collide and a
@@ -95,7 +96,7 @@ async function main() {
   const secret = `teal-${nonce}`;
   const value = { content: `my favorite color is ${secret}`, run: nonce };
 
-  const client = new Mnemo({ apiKey, workspaceId });
+  const client = new Mnemo({ apiKey, ...(workspaceId ? { workspaceId } : {}) });
   const store = new MnemoStore({ client });
 
   console.log("[smoke] run nonce :", nonce);
