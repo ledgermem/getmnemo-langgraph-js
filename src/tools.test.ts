@@ -176,6 +176,16 @@ describe("createMnemoTools", () => {
       const raw = await recallTool.invoke({ query: "coffee" });
       expect(JSON.parse(raw as string)).toEqual({ results: [] });
     });
+
+    it("rethrows a 404 that is not container-not-found", async () => {
+      search.mockRejectedValue(
+        Object.assign(new Error("Route not found"), { status: 404 }),
+      );
+      const { recallTool } = tools();
+      await expect(recallTool.invoke({ query: "coffee" })).rejects.toThrow(
+        /Route not found/,
+      );
+    });
   });
 
   describe("remember", () => {

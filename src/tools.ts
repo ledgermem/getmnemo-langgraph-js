@@ -2,7 +2,7 @@ import { tool } from "@langchain/core/tools";
 import type { StructuredToolInterface } from "@langchain/core/tools";
 import type { Mnemo } from "getmnemo";
 
-import { isNotFound, resolveClient, type MnemoClientOptions } from "./client.js";
+import { isContainerNotFound, resolveClient, type MnemoClientOptions } from "./client.js";
 
 /** Tool name the model sees when writing a memory. */
 export const REMEMBER_TOOL_NAME = "remember_memory";
@@ -163,7 +163,7 @@ async function recall(
   } catch (error) {
     // A container with nothing in it yet 404s; for a recall that means "no
     // memories", not a tool failure.
-    if (isNotFound(error)) return { results: [] };
+    if (isContainerNotFound(error)) return { results: [] };
     throw error;
   }
 }

@@ -32,11 +32,25 @@ export function resolveClient(
   return new Mnemo({ apiKey, ...(workspaceId ? { workspaceId } : {}) });
 }
 
-/** True for a 404 from the API — usually "container does not exist yet". */
+/** True for any 404 — used for by-id routes where the memory itself vanished. */
 export function isNotFound(error: unknown): boolean {
   return (
     error instanceof Error && (error as { status?: number }).status === 404
   );
+}
+
+/**
+ * True only for the API's 404 "Container not found" (a container nothing has
+ * been written to yet). Other 404s (wrong route, etc.) must be rethrown.
+ */
+export function isContainerNotFound(error: unknown): boolean {
+  if (!isNotFound(error)) return false;
+  const body = (error as { body?: unknown }).body;
+  const code =
+    body && typeof body === "object" && "code" in body
+      ? String((body as { code?: unknown }).code)
+      : "";
+  return /container/i.test((error as Error).message) || /container/i.test(code);
 }
 
 /**

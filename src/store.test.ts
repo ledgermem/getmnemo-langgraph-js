@@ -444,6 +444,15 @@ describe("MnemoStore", () => {
         [],
       );
     });
+
+    it("rethrows a 404 that is not container-not-found", async () => {
+      const routeMissing = Object.assign(new Error("Route not found"), { status: 404 });
+      search.mockRejectedValue(routeMissing);
+      const store = new MnemoStore({ client });
+      await expect(
+        store.search(["memories", "user42"], { query: "x" }),
+      ).rejects.toThrow(/Route not found/);
+    });
   });
 
   describe("delete", () => {
