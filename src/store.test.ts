@@ -668,7 +668,13 @@ describe("MnemoStore", () => {
     });
 
     it("constructs without workspaceId (deprecated in core 0.6 — identity comes from the API key)", () => {
-      expect(() => new MnemoStore({ apiKey: "k" })).not.toThrow();
+      const ws = process.env.GETMNEMO_WORKSPACE_ID;
+      delete process.env.GETMNEMO_WORKSPACE_ID;
+      try {
+        expect(() => new MnemoStore({ apiKey: "k" })).not.toThrow();
+      } finally {
+        if (ws !== undefined) process.env.GETMNEMO_WORKSPACE_ID = ws;
+      }
     });
   });
 });

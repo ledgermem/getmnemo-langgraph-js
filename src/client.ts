@@ -8,8 +8,8 @@ export interface MnemoClientOptions {
   apiKey?: string;
   /**
    * @deprecated Workspace identity is taken from the API key in core 0.6.
-   * Still accepted and forwarded for backwards compatibility. Falls back to
-   * `GETMNEMO_WORKSPACE_ID`.
+   * Accepted for backwards compatibility but ignored (a no-op in core 0.6).
+   * Falls back to `GETMNEMO_WORKSPACE_ID`.
    */
   workspaceId?: string;
 }
@@ -20,8 +20,8 @@ export function resolveClient(
 ): Mnemo {
   if (options.client) return options.client;
   const apiKey = options.apiKey ?? process.env.GETMNEMO_API_KEY;
-  // Deprecated in core 0.6 (workspace identity comes from the API key), but
-  // still accepted and forwarded for backwards compatibility.
+  // Deprecated in core 0.6 (workspace identity comes from the API key);
+  // accepted for backwards compatibility but ignored by the core.
   const workspaceId = options.workspaceId ?? process.env.GETMNEMO_WORKSPACE_ID;
   if (!apiKey) {
     throw new Error(

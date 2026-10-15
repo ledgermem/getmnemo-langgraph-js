@@ -22,8 +22,11 @@
  *
  * Required env:
  *   MNEMO_API_KEY        scoped test key (needs delete scope for cleanup)
- *   MNEMO_WORKSPACE_ID   throwaway test workspace id
  *   MNEMO_TEST_CONTAINER base container id stem, e.g. "ci-smoke"
+ *
+ * Optional env:
+ *   MNEMO_WORKSPACE_ID   deprecated; forwarded to the core client, which
+ *                        ignores it (identity comes from the API key)
  */
 
 import { Mnemo } from "getmnemo";

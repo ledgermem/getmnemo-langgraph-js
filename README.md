@@ -17,7 +17,7 @@ LangGraph brings all three.
 
 Set `GETMNEMO_API_KEY`, or pass `apiKey` in explicitly. (`workspaceId` is
 deprecated — workspace identity now comes from the API key. It is still
-accepted and forwarded if you pass it.)
+accepted for backwards compatibility but ignored (a no-op in core 0.6).)
 
 > **Security:** the `apiKey` is **full-access** by default — keep it
 > server-side. For client-exposed contexts, mint a **scoped read-only key** at
