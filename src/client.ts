@@ -2,11 +2,15 @@ import { Mnemo } from "getmnemo";
 
 /** Credentials accepted by every entry point in this package. */
 export interface MnemoClientOptions {
-  /** Pre-built core client. Wins over `apiKey` / `workspaceId`. */
+  /** Pre-built core client. Wins over `apiKey`. */
   client?: Mnemo;
   /** Falls back to `GETMNEMO_API_KEY`. Full-access by default — keep it server-side. */
   apiKey?: string;
-  /** Falls back to `GETMNEMO_WORKSPACE_ID`. */
+  /**
+   * @deprecated Workspace identity is taken from the API key in core 0.6.
+   * Accepted for backwards compatibility but ignored (a no-op in core 0.6).
+   * Falls back to `GETMNEMO_WORKSPACE_ID`.
+   */
   workspaceId?: string;
 }
 
@@ -16,21 +20,37 @@ export function resolveClient(
 ): Mnemo {
   if (options.client) return options.client;
   const apiKey = options.apiKey ?? process.env.GETMNEMO_API_KEY;
+  // Deprecated in core 0.6 (workspace identity comes from the API key);
+  // accepted for backwards compatibility but ignored by the core.
   const workspaceId = options.workspaceId ?? process.env.GETMNEMO_WORKSPACE_ID;
-  if (!apiKey || !workspaceId) {
+  if (!apiKey) {
     throw new Error(
-      `${caller}: missing apiKey/workspaceId. Pass them explicitly, pass a ` +
-        "pre-built `client`, or set GETMNEMO_API_KEY and GETMNEMO_WORKSPACE_ID.",
+      `${caller}: missing apiKey. Pass it explicitly, pass a pre-built ` +
+        "`client`, or set GETMNEMO_API_KEY.",
     );
   }
-  return new Mnemo({ apiKey, workspaceId });
+  return new Mnemo({ apiKey, ...(workspaceId ? { workspaceId } : {}) });
 }
 
-/** True for a 404 from the API — usually "container does not exist yet". */
+/** True for any 404 — used for by-id routes where the memory itself vanished. */
 export function isNotFound(error: unknown): boolean {
   return (
     error instanceof Error && (error as { status?: number }).status === 404
   );
+}
+
+/**
+ * True only for the API's 404 "Container not found" (a container nothing has
+ * been written to yet). Other 404s (wrong route, etc.) must be rethrown.
+ */
+export function isContainerNotFound(error: unknown): boolean {
+  if (!isNotFound(error)) return false;
+  const body = (error as { body?: unknown }).body;
+  const code =
+    body && typeof body === "object" && "code" in body
+      ? String((body as { code?: unknown }).code)
+      : "";
+  return /container/i.test((error as Error).message) || /container/i.test(code);
 }
 
 /**

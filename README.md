@@ -10,12 +10,14 @@ A `BaseStore` you hand to `graph.compile({ store })`, plus two ready-made
 npm install getmnemo-langgraph @langchain/langgraph
 ```
 
-`getmnemo` (the core SDK) is bundled as a dependency, so it is installed for
-you. `@langchain/langgraph`, `@langchain/langgraph-checkpoint` (where
-`BaseStore` lives), and `@langchain/core` are peers — installing LangGraph
-brings all three.
+`getmnemo` (the core SDK, `^0.6`) is bundled as a dependency, so it is
+installed for you. `@langchain/langgraph`, `@langchain/langgraph-checkpoint`
+(where `BaseStore` lives), and `@langchain/core` are peers — installing
+LangGraph brings all three.
 
-Set `GETMNEMO_API_KEY` and `GETMNEMO_WORKSPACE_ID`, or pass them in explicitly.
+Set `GETMNEMO_API_KEY`, or pass `apiKey` in explicitly. (`workspaceId` is
+deprecated — workspace identity now comes from the API key. It is still
+accepted for backwards compatibility but ignored (a no-op in core 0.6).)
 
 > **Security:** the `apiKey` is **full-access** by default — keep it
 > server-side. For client-exposed contexts, mint a **scoped read-only key** at
@@ -57,7 +59,7 @@ yourself.
 import { StateGraph, MessagesAnnotation } from "@langchain/langgraph";
 import { MnemoStore } from "getmnemo-langgraph";
 
-const store = new MnemoStore(); // reads GETMNEMO_API_KEY / GETMNEMO_WORKSPACE_ID
+const store = new MnemoStore(); // reads GETMNEMO_API_KEY
 
 // Write — the namespace tuple picks the container, the key addresses the item.
 await store.put(["memories", "user42"], "profile", { name: "Ada", tz: "PKT" });
@@ -185,15 +187,19 @@ const { recallTool, rememberTool } = createMnemoTools({
 Both return a JSON string. Neither exposes `containerTag`, `scope`, or
 `workspaceId`.
 
+A brand-new container (first recall for a new user) has nothing to search yet —
+the API's 404 ("Container not found") is treated as "no memories": `recall_memory`
+returns `{ results: [] }` and `store.search` returns `[]` instead of throwing.
+
 ## Options
 
 ### `MnemoStore`
 
 | Option | Default | Description |
 | ------ | ------- | ----------- |
-| `client` | — | Existing `Mnemo` instance (overrides `apiKey`/`workspaceId`). Must be getmnemo **>= 0.5.1**: older clients silently drop the container options on by-id calls, and the API then 400s every `get`/overwriting `put`/`delete`. |
+| `client` | — | Existing `Mnemo` instance (overrides `apiKey`). Must be getmnemo **>= 0.5.1** (bundled: `^0.6`): older clients silently drop the container options on by-id calls, and the API then 400s every `get`/overwriting `put`/`delete`. |
 | `apiKey` | env | Full-access — keep server-side. Falls back to `GETMNEMO_API_KEY`. |
-| `workspaceId` | env | Falls back to `GETMNEMO_WORKSPACE_ID`. |
+| `workspaceId` | env | **Deprecated** (identity comes from the API key). Still accepted; falls back to `GETMNEMO_WORKSPACE_ID`. |
 | `containerTag` | — | Pin every namespace to one container instead of deriving one per namespace. |
 | `pageSize` | `100` | Items per list page. Clamped to the API max of 100. |
 | `maxScanPages` | `20` | Pages walked before a keyed lookup gives up (≈2000 items). |

@@ -12,6 +12,7 @@ import type {
 import type { Memory, Mnemo, SearchHit } from "getmnemo";
 
 import {
+  isContainerNotFound,
   isNotFound,
   isStaleByIdRead,
   resolveClient,
@@ -245,7 +246,7 @@ export class MnemoStore extends BaseStore {
       // A container with no memories yet 404s. For a read that means "nothing
       // stored", not a failure — otherwise the first search in every new graph
       // run throws.
-      if (isNotFound(error)) return [];
+      if (isContainerNotFound(error)) return [];
       throw error;
     }
   }
@@ -323,7 +324,7 @@ export class MnemoStore extends BaseStore {
         batch = response.items ?? [];
         cursor = response.nextCursor ?? undefined;
       } catch (error) {
-        if (isNotFound(error)) return collected;
+        if (isContainerNotFound(error)) return collected;
         throw error;
       }
       // Soft-deleted memories are restorable server-side but must read as
